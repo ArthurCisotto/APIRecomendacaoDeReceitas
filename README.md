@@ -63,10 +63,10 @@ O servidor estará disponível em `http://10.103.0.28:6352` (ou na porta especif
 
 ## Utilização
 
-Para realizar uma busca, envie uma requisição GET para a rota `/query` com o parâmetro `query`. Exemplo:
+Para realizar uma busca, envie uma requisição GET para a rota `/query` com o parâmetro `query_text`. Exemplo:
 
 ```
-http://10.103.0.28:6352/query?query=cenoura
+http://10.103.0.28:6352/query?query_text=cenoura
 ```
 ## Formato de Retorno da API
 
