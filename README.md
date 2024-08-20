@@ -111,7 +111,7 @@ A relevância é calculada usando técnicas de processamento de linguagem natura
    Este teste provavelmente retornará menos de 10 resultados devido à especificidade do ingrediente.
 
 3. Teste que retorna algo não óbvio:
-   [http://10.103.0.28:6352/query?query_text=receitas com café](http://10.103.0.28:6352/query?query_text=receitas%20com%20café)
+   [http://10.103.0.28:6352/query?query_text=café](http://10.103.0.28:6352/query?query_text=café)
      
    Este teste busca por receitas que utilizam café como ingrediente, mas revela um aspecto interessante do sistema de busca. Enquanto algumas receitas retornadas são as esperadas, como "Capuccino caseiro" e "Creme de café", muitas outras aparecem devido ao uso de "café" como unidade de medida (por exemplo, "1 colher de café de canela"). Isso demonstra uma limitação atual do pré-processamento de texto, que já remove unidades de medida comuns como "colher" e "xícara", mas não considera "café" nesse contexto. Esta descoberta oferece uma oportunidade de melhoria no algoritmo de busca, destacando como resultados aparentemente não relacionados podem surgir devido a nuances linguísticas em receitas.
 
