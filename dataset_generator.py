@@ -2,6 +2,7 @@ import csv
 import cloudscraper
 from bs4 import BeautifulSoup
 import json
+import resource
 
 def get_page_content(url):
     scraper = cloudscraper.create_scraper(
@@ -102,4 +103,5 @@ def dataset_generator(start_page=1, max_recipes=100):
 
 
 if __name__ == "__main__":
+    resource.setrlimit(resource.RLIMIT_NOFILE, (4096, 4096))
     dataset_generator(start_page=1, max_recipes=1000)
