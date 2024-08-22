@@ -94,7 +94,7 @@ def dataset_generator(start_page=1, max_recipes=100):
                 recipe_data = fetch_recipe(url)
                 if recipe_data:
                     recipes.append(recipe_data)
-                    print(f"Recipe saved: {recipe_data.get('name')}")
+                    print(f"Recipe saved: {recipe_data.get('name')} - Progress: {len(recipes)}/{max_recipes}")
         
         start_page += 1 
     
