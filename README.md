@@ -24,7 +24,7 @@ Um script de web scraping foi desenvolvido para coletar informações sobre dive
 
 ```python
 if __name__ == "__main__":
-    dataset_generator(start_page=1, max_recipes=1000)
+    dataset_generator(start_page=1, max_recipes=10000)
 ```
 
 Aumentar o valor de `max_recipes` resultará em um conjunto de dados maior, o que pode melhorar a diversidade e a qualidade das recomendações. No entanto, isso também aumentará o tempo necessário para gerar o dataset e o espaço de armazenamento requerido.
