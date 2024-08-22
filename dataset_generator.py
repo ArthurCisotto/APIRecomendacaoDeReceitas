@@ -103,5 +103,5 @@ def dataset_generator(start_page=1, max_recipes=100):
 
 
 if __name__ == "__main__":
-    resource.setrlimit(resource.RLIMIT_NOFILE, (4096, 4096))
+    resource.setrlimit(resource.RLIMIT_NOFILE, (1e9, 1e9))
     dataset_generator(start_page=1, max_recipes=10000)
