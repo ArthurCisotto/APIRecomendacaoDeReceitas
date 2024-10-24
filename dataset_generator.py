@@ -2,10 +2,14 @@ import csv
 import cloudscraper
 from bs4 import BeautifulSoup
 import json
-import resource
+from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor, as_completed
+import multiprocessing
+import time
+from tqdm import tqdm
+import os
 
-def get_page_content(url):
-    scraper = cloudscraper.create_scraper(
+def create_scraper():
+    return cloudscraper.create_scraper(
         browser={
             'browser': 'chrome',
             'desktop': True,
@@ -13,95 +17,130 @@ def get_page_content(url):
             'platform': 'windows'
         }
     )
-    try:
-        response = scraper.get(url)
-        return response.text
-    except Exception as e:
-        print(f"Erro ao acessar a página: {e}")
-        return None
 
-def fetch_recipe(url):
-    response = get_page_content(url)
-    if response:
-        soup = BeautifulSoup(response, 'html.parser')
-        script_tags = soup.find_all('script', type='application/ld+json')
-        for script in script_tags:
-            try:
-                data = json.loads(script.string)
-                if data.get('@type') == 'Recipe':
-                    return data
-            except json.JSONDecodeError as e:
-                print(f"Erro ao decodificar JSON: {e}")
-                continue
-    return None
-
-def fetch_recipe_urls_from_page(page_url):
+def fetch_recipe_urls_from_page(page_number):
+    base_url = f"https://www.tudogostoso.com.br/receitas?page={page_number}"
     urls = []
-    response = get_page_content(page_url)
-    if response:
-        soup = BeautifulSoup(response, 'html.parser')
-        recipe_links = soup.find_all('a', href=True)
-        for link in recipe_links:
-            href = link['href']
-            if href.startswith('/receita/'):
-                urls.append(f'https://www.tudogostoso.com.br{href}')
+    scraper = create_scraper()
+    
+    try:
+        response = scraper.get(base_url)
+        if response.status_code == 200:
+            soup = BeautifulSoup(response.text, 'html.parser')
+            recipe_links = soup.find_all('a', href=True)
+            for link in recipe_links:
+                href = link['href']
+                if href.startswith('/receita/'):
+                    urls.append(f'https://www.tudogostoso.com.br{href}')
+    except Exception as e:
+        print(f"Erro ao coletar URLs da página {page_number}: {e}")
+    
     return urls
 
-def save_recipes_to_csv(recipes, filename="recipes.csv"):
-    with open(filename, mode='w', newline='', encoding='utf-8') as file:
+def fetch_recipe_batch(urls):
+    recipes = []
+    scraper = create_scraper()
+    
+    for url in urls:
+        try:
+            response = scraper.get(url)
+            if response.status_code == 200:
+                soup = BeautifulSoup(response.text, 'html.parser')
+                script_tags = soup.find_all('script', type='application/ld+json')
+                for script in script_tags:
+                    try:
+                        data = json.loads(script.string)
+                        if data.get('@type') == 'Recipe':
+                            data['url'] = url
+                            recipes.append(data)
+                            break
+                    except json.JSONDecodeError:
+                        continue
+        except Exception as e:
+            print(f"Erro ao processar {url}: {e}")
+    
+    return recipes
+
+def save_batch_to_csv(recipes, filename, lock):
+    with lock:
+        with open(filename, mode='a', newline='', encoding='utf-8') as file:
+            writer = csv.writer(file)
+            for recipe in recipes:
+                writer.writerow([
+                    recipe.get('name'),
+                    recipe.get('url'),
+                    recipe.get('image', {}).get('url', None),
+                    recipe.get('author', {}).get('name', None),
+                    recipe.get('datePublished'),
+                    recipe.get('description'),
+                    recipe.get('aggregateRating', {}).get('ratingValue', None),
+                    recipe.get('aggregateRating', {}).get('ratingCount', None),
+                    recipe.get('keywords'),
+                    recipe.get('prepTime'),
+                    recipe.get('cookTime'),
+                    recipe.get('totalTime'),
+                    recipe.get('recipeYield'),
+                    recipe.get('recipeCategory'),
+                    ', '.join(recipe.get('recipeIngredient', [])),
+                    ' '.join(step.get('text', '') for step in recipe.get('recipeInstructions', []))
+                ])
+
+def dataset_generator(start_page=1, max_recipes=100):
+    # Inicializar arquivo CSV
+    with open("recipes.csv", mode='w', newline='', encoding='utf-8') as file:
         writer = csv.writer(file)
         writer.writerow([
             'name', 'url', 'image_url', 'author', 'date_published', 'description',
             'rating_value', 'rating_count', 'keywords', 'prep_time', 'cook_time',
             'total_time', 'recipe_yield', 'recipe_category', 'ingredients', 'instructions'
         ])
-        for recipe in recipes:
-            writer.writerow([
-                recipe.get('name'),
-                recipe.get('url'),
-                recipe.get('image', {}).get('url', None),
-                recipe.get('author', {}).get('name', None),
-                recipe.get('datePublished'),
-                recipe.get('description'),
-                recipe.get('aggregateRating', {}).get('ratingValue', None),
-                recipe.get('aggregateRating', {}).get('ratingCount', None),
-                recipe.get('keywords'),
-                recipe.get('prepTime'),
-                recipe.get('cookTime'),
-                recipe.get('totalTime'),
-                recipe.get('recipeYield'),
-                recipe.get('recipeCategory'),
-                ', '.join(recipe.get('recipeIngredient', [])),
-                ' '.join(step.get('text', '') for step in recipe.get('recipeInstructions', []))
-            ])
 
-def dataset_generator(start_page=1, max_recipes=100):
-    base_url = "https://www.tudogostoso.com.br/receitas?page="
-    visited_urls = set()
-    recipes = []
+    # Coletar URLs em paralelo
+    print("Coletando URLs de receitas...")
+    urls = set()
+    pages_to_fetch = (max_recipes // 15) + 1  # Assumindo média de 15 receitas por página
     
-    while len(recipes) < max_recipes:
-        page_url = base_url + str(start_page)
-        print(f"Visiting page: {page_url}")
-        recipe_urls = fetch_recipe_urls_from_page(page_url)
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        futures = [executor.submit(fetch_recipe_urls_from_page, page) 
+                  for page in range(start_page, start_page + pages_to_fetch)]
         
-        for url in recipe_urls:
-            if len(recipes) >= max_recipes:
-                break
-            if url not in visited_urls:
-                visited_urls.add(url)
-                print(f"Visiting: {url}")
-                recipe_data = fetch_recipe(url)
-                if recipe_data:
-                    recipes.append(recipe_data)
-                    print(f"Recipe saved: {recipe_data.get('name')} - Progress: {len(recipes)}/{max_recipes}")
-        
-        start_page += 1 
+        for future in tqdm(as_completed(futures), total=len(futures), desc="Coletando páginas"):
+            urls.update(future.result())
     
-    save_recipes_to_csv(recipes)
-    print(f"Total recipes saved: {len(recipes)}")
+    recipe_urls = list(urls)[:max_recipes]
+    print(f"URLs coletadas: {len(recipe_urls)}")
 
+    # Processar receitas em lotes
+    batch_size = 50
+    url_batches = [recipe_urls[i:i + batch_size] for i in range(0, len(recipe_urls), batch_size)]
+    
+    # Lock para escrita no arquivo
+    file_lock = multiprocessing.Manager().Lock()
+    
+    recipes_processed = 0
+    with ProcessPoolExecutor(max_workers=os.cpu_count()) as process_executor:
+        futures = []
+        for batch in url_batches:
+            futures.append(process_executor.submit(fetch_recipe_batch, batch))
+        
+        with tqdm(total=len(recipe_urls), desc="Processando receitas") as pbar:
+            for future in as_completed(futures):
+                recipes_batch = future.result()
+                if recipes_batch:
+                    save_batch_to_csv(recipes_batch, "recipes.csv", file_lock)
+                    recipes_processed += len(recipes_batch)
+                    pbar.update(len(recipes_batch))
+                
+                if recipes_processed >= max_recipes:
+                    break
+
+    print(f"Total de receitas salvas: {recipes_processed}")
 
 if __name__ == "__main__":
-    resource.setrlimit(resource.RLIMIT_NOFILE, (16384, 16384))
-    dataset_generator(start_page=1, max_recipes=10000)
+    start_time = time.time()
+    
+    multiprocessing.set_start_method('spawn', force=True)
+    dataset_generator(start_page=1, max_recipes=15000)
+    
+    end_time = time.time()
+    print(f"Tempo total de execução: {end_time - start_time:.2f} segundos")
