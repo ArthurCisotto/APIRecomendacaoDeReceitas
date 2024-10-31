@@ -4,17 +4,15 @@ from typing import List, Optional, Dict
 import logging
 from search_engine import RecipeSearchEngine
 
-# Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="Recipe Search API with SBERT and Autoencoder")
+app = FastAPI(title="Recipe Search API with SBERT and Denoising Autoencoder")
 
 class SearchResponse(BaseModel):
     results: List[Dict]
     message: str
 
-# Initialize search engine
 search_engine = RecipeSearchEngine()
 
 @app.on_event("startup")

@@ -1,26 +1,48 @@
 import torch
 import torch.nn as nn
 from torch.utils.data import Dataset
-import os
 
-class RecipeAutoencoder(nn.Module):
-    def __init__(self, input_dim=768, hidden_dim=384):
-        super(RecipeAutoencoder, self).__init__()
+class DenoisingAutoencoder(nn.Module):
+    def __init__(self, input_dim=768, hidden_dims=[512, 256, 128]):
+        super(DenoisingAutoencoder, self).__init__()
         
-        self.encoder = nn.Sequential(
-            nn.Linear(input_dim, hidden_dim),
-            nn.ReLU(),
-            nn.Linear(hidden_dim, hidden_dim//2),
-            nn.ReLU(),
-        )
+        # Encoder
+        encoder_layers = []
+        current_dim = input_dim
+        for hidden_dim in hidden_dims:
+            encoder_layers.extend([
+                nn.Linear(current_dim, hidden_dim),
+                nn.BatchNorm1d(hidden_dim),
+                nn.ReLU(),
+                nn.Dropout(0.1)
+            ])
+            current_dim = hidden_dim
+            
+        self.encoder = nn.Sequential(*encoder_layers)
         
-        self.decoder = nn.Sequential(
-            nn.Linear(hidden_dim//2, hidden_dim),
-            nn.ReLU(),
-            nn.Linear(hidden_dim, input_dim),
-        )
+        # Decoder
+        decoder_layers = []
+        hidden_dims.reverse()
+        current_dim = hidden_dims[0]
+        for hidden_dim in hidden_dims[1:] + [input_dim]:
+            decoder_layers.extend([
+                nn.Linear(current_dim, hidden_dim),
+                nn.BatchNorm1d(hidden_dim),
+                nn.ReLU(),
+                nn.Dropout(0.1)
+            ])
+            current_dim = hidden_dim
+            
+        self.decoder = nn.Sequential(*decoder_layers)
         
-    def forward(self, x):
+    def add_noise(self, x, noise_factor=0.2):
+        noise = torch.randn_like(x) * noise_factor
+        noisy_x = x + noise
+        return noisy_x
+        
+    def forward(self, x, add_noise=True):
+        if add_noise:
+            x = self.add_noise(x)
         encoded = self.encoder(x)
         decoded = self.decoder(encoded)
         return decoded, encoded
