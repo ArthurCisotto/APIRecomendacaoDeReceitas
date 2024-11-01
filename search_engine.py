@@ -6,7 +6,11 @@ from sentence_transformers import SentenceTransformer
 import pandas as pd
 import numpy as np
 from sklearn.manifold import TSNE
+from sklearn.metrics import silhouette_score, calinski_harabasz_score
+from sklearn.preprocessing import LabelEncoder
 import plotly.express as px
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 import logging
 import os
 import pickle
@@ -120,39 +124,247 @@ class RecipeSearchEngine:
         self.save_data()
         logger.info("Dados preparados e salvos com sucesso")
     
+    def categorize_recipe(self, name: str, ingredients: str, instructions: str) -> List[str]:
+        """
+        Categorizes a recipe based on its name, ingredients and instructions.
+        Returns a list of applicable categories.
+        """
+        name = name.lower()
+        ingredients = ingredients.lower()
+        instructions = instructions.lower()
+        
+        # Dicionário de categorias e suas palavras-chave associadas
+        category_keywords = {
+            'Chocolate': [
+                'chocolate', 'cacau', 'brigadeiro', 'brownie', 'mousse de chocolate',
+                'chocolate em pó', 'achocolatado'
+            ],
+            'Meat': [
+                'carne', 'bife', 'picanha', 'alcatra', 'costela', 'cupim', 'maminha',
+                'patinho', 'contrafilé', 'filé mignon'
+            ],
+            'Chicken': [
+                'frango', 'galinha', 'coxa', 'sobrecoxa', 'peito de frango',
+                'asa de frango', 'coxinha da asa'
+            ],
+            'Fish': [
+                'peixe', 'salmão', 'atum', 'bacalhau', 'tilápia', 'sardinha',
+                'pescada', 'merluza', 'camarão', 'polvo', 'lula'
+            ],
+            'Pork': [
+                'porco', 'bacon', 'linguiça', 'costela de porco', 'pernil',
+                'lombo', 'pancetta', 'calabresa'
+            ],
+            'Pasta': [
+                'macarrão', 'espaguete', 'penne', 'lasanha', 'nhoque',
+                'ravioli', 'talharim', 'fetuccine'
+            ],
+            'Rice': [
+                'arroz', 'risoto', 'arroz integral', 'arroz carreteiro',
+                'arroz de forno'
+            ],
+            'Beans': [
+                'feijão', 'feijoada', 'lentilha', 'grão de bico', 'ervilha'
+            ],
+            'Salad': [
+                'salada', 'alface', 'rúcula', 'agrião', 'couve'
+            ],
+            'Cake': [
+                'bolo', 'torta', 'cupcake', 'muffin', 'rocambole'
+            ],
+            'Cookie': [
+                'biscoito', 'cookie', 'bolacha'
+            ],
+            'Pie': [
+                'torta', 'quiche', 'empadão'
+            ],
+            'Bread': [
+                'pão', 'broa', 'brioche', 'focaccia', 'ciabatta'
+            ]
+        }
+        
+        # Lista para armazenar as categorias encontradas
+        found_categories = set()
+        
+        # Verifica cada categoria
+        for category, keywords in category_keywords.items():
+            # Procura keywords no nome, ingredientes e instruções
+            for keyword in keywords:
+                # Evita matches parciais usando espaços
+                if f' {keyword} ' in f' {name} ' or \
+                f' {keyword} ' in f' {ingredients} ' or \
+                f' {keyword} ' in f' {instructions} ':
+                    found_categories.add(category)
+                    break
+        
+        # Adiciona categorias especiais baseadas em combinações
+        all_text = f'{name} {ingredients} {instructions}'
+        
+        # Detecta pratos vegetarianos (não contém carne)
+        meat_keywords = set()
+        for category in ['Meat', 'Chicken', 'Fish', 'Pork']:
+            meat_keywords.update(category_keywords[category])
+        
+        has_meat = any(f' {keyword} ' in f' {all_text} ' for keyword in meat_keywords)
+        if not has_meat and any(keyword in all_text for keyword in ['legume', 'verdura', 'vegano', 'vegetariano']):
+            found_categories.add('Vegetarian')
+        
+        # Detecta sobremesas
+        dessert_categories = {'Chocolate', 'Cake', 'Cookie', 'Pie'}
+        sweet_ingredients = {'açúcar', 'chocolate', 'leite condensado', 'doce de leite', 'mel'}
+        if (found_categories & dessert_categories) or \
+        any(ingredient in ingredients for ingredient in sweet_ingredients):
+            found_categories.add('Dessert')
+        
+        # Se nenhuma categoria foi encontrada, marca como Other
+        if not found_categories:
+            found_categories.add('Other')
+        
+        return list(found_categories)
+
     def visualize_embeddings(self, filename_prefix):
+        """
+        Visualizes and compares both original SBERT embeddings and reduced autoencoder embeddings
+        using TSNE and includes clustering analysis.
+        """
         sbert_viz_path = f"{filename_prefix}_sbert.html"
         reduced_viz_path = f"{filename_prefix}_reduced.html"
+        comparison_viz_path = f"{filename_prefix}_comparison.html"
         
-        if os.path.exists(sbert_viz_path) and os.path.exists(reduced_viz_path):
-            logger.info("Visualizações já existem, pulando geração...")
-            return
-            
-        logger.info("Gerando visualizações t-SNE...")
+        logger.info("Generating TSNE visualizations...")
         
-        tsne_original = TSNE(n_components=2, random_state=42)
+        # TSNE for original SBERT embeddings
+        tsne_original = TSNE(n_components=2, random_state=42, perplexity=30, n_iter=1000)
         tsne_result_original = tsne_original.fit_transform(self.embeddings)
         
-        fig_original = px.scatter(
-            x=tsne_result_original[:, 0],
-            y=tsne_result_original[:, 1],
-            hover_data=[self.df['name']],
-            title='t-SNE visualization of SBERT embeddings'
-        )
-        fig_original.write_html(sbert_viz_path)
-        
-        tsne_reduced = TSNE(n_components=2, random_state=42)
+        # TSNE for autoencoder-reduced embeddings
+        tsne_reduced = TSNE(n_components=2, random_state=42, perplexity=30, n_iter=1000)
         tsne_result_reduced = tsne_reduced.fit_transform(self.reduced_embeddings)
         
-        fig_reduced = px.scatter(
-            x=tsne_result_reduced[:, 0],
-            y=tsne_result_reduced[:, 1],
-            hover_data=[self.df['name']],
-            title='t-SNE visualization of autoencoder-reduced embeddings'
-        )
-        fig_reduced.write_html(reduced_viz_path)
+        # Get categories for each recipe
+        categories_list = [
+            self.categorize_recipe(
+                name=row['name'],
+                ingredients=row['ingredients'],
+                instructions=row['instructions']
+            )
+            for _, row in self.df.iterrows()
+        ]
         
-        logger.info("Visualizações geradas com sucesso")
+        # Create main category for visualization (using first category)
+        main_categories = [cats[0] if cats else 'Other' for cats in categories_list]
+        
+        # Create DataFrame for plotting
+        plot_df_original = pd.DataFrame({
+            'x': tsne_result_original[:, 0],
+            'y': tsne_result_original[:, 1],
+            'name': self.df['name'],
+            'main_category': main_categories,
+            'all_categories': [', '.join(cats) for cats in categories_list],
+            'ingredients': self.df['ingredients']
+        })
+        
+        plot_df_reduced = pd.DataFrame({
+            'x': tsne_result_reduced[:, 0],
+            'y': tsne_result_reduced[:, 1],
+            'name': self.df['name'],
+            'main_category': main_categories,
+            'all_categories': [', '.join(cats) for cats in categories_list],
+            'ingredients': self.df['ingredients']
+        })
+        
+        # Create interactive plots
+        fig_original = px.scatter(
+            plot_df_original,
+            x='x',
+            y='y',
+            color='main_category',
+            hover_data=['name', 'all_categories', 'ingredients'],
+            title='SBERT Embeddings Visualization',
+            labels={'main_category': 'Main Category'}
+        )
+        
+        fig_reduced = px.scatter(
+            plot_df_reduced,
+            x='x',
+            y='y',
+            color='category',
+            hover_data=['name', 'ingredients'],
+            title='Autoencoder-Reduced Embeddings Visualization',
+            labels={'color': 'Recipe Category'}
+        )
+        
+        # Create comparison plot
+        fig_comparison = make_subplots(
+            rows=1, cols=2,
+            subplot_titles=('SBERT Embeddings', 'Autoencoder-Reduced Embeddings')
+        )
+        
+        # Add traces for each category
+        for category in plot_df_original['category'].unique():
+            # Original embeddings
+            mask_orig = plot_df_original['category'] == category
+            fig_comparison.add_trace(
+                go.Scatter(
+                    x=plot_df_original[mask_orig]['x'],
+                    y=plot_df_original[mask_orig]['y'],
+                    name=category,
+                    mode='markers',
+                    showlegend=True
+                ),
+                row=1, col=1
+            )
+            
+            # Reduced embeddings
+            mask_red = plot_df_reduced['category'] == category
+            fig_comparison.add_trace(
+                go.Scatter(
+                    x=plot_df_reduced[mask_red]['x'],
+                    y=plot_df_reduced[mask_red]['y'],
+                    name=category,
+                    mode='markers',
+                    showlegend=False
+                ),
+                row=1, col=2
+            )
+        
+        fig_comparison.update_layout(
+            title_text="Comparison of Embedding Spaces",
+            height=600
+        )
+        
+        # Save visualizations
+        fig_original.write_html(sbert_viz_path)
+        fig_reduced.write_html(reduced_viz_path)
+        fig_comparison.write_html(comparison_viz_path)
+        
+        logger.info("Visualizations generated successfully")
+        
+        # Calculate and log clustering metrics
+        from sklearn.metrics import silhouette_score, calinski_harabasz_score
+        
+        # Convert categories to numerical labels
+        from sklearn.preprocessing import LabelEncoder
+        le = LabelEncoder()
+        labels = le.fit_transform(categories)
+        
+        # Calculate clustering metrics for both embedding spaces
+        sbert_silhouette = silhouette_score(self.embeddings, labels)
+        reduced_silhouette = silhouette_score(self.reduced_embeddings, labels)
+        
+        sbert_ch = calinski_harabasz_score(self.embeddings, labels)
+        reduced_ch = calinski_harabasz_score(self.reduced_embeddings, labels)
+        
+        logger.info(f"""
+        Clustering Metrics:
+        SBERT Embeddings:
+        - Silhouette Score: {sbert_silhouette:.3f}
+        - Calinski-Harabasz Score: {sbert_ch:.3f}
+        
+        Autoencoder-Reduced Embeddings:
+        - Silhouette Score: {reduced_silhouette:.3f}
+        - Calinski-Harabasz Score: {reduced_ch:.3f}
+        """)
 
     def normalize_text(self, text: str) -> str:
         """Normaliza o texto removendo acentos e convertendo para minúsculas"""
