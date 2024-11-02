@@ -9,8 +9,6 @@ from sklearn.manifold import TSNE
 from sklearn.metrics import silhouette_score, calinski_harabasz_score
 from sklearn.preprocessing import LabelEncoder
 import plotly.express as px
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
 import logging
 import os
 import pickle
@@ -289,7 +287,7 @@ class RecipeSearchEngine:
             plot_df_original,
             x='x',
             y='y',
-            color='main_category',  # Corrigido de 'category' para 'main_category'
+            color='main_category', 
             hover_data=['name', 'all_categories', 'ingredients'],
             title='SBERT Embeddings Visualization',
             labels={'main_category': 'Main Category'}
@@ -299,7 +297,7 @@ class RecipeSearchEngine:
             plot_df_reduced,
             x='x',
             y='y',
-            color='main_category',  # Corrigido de 'category' para 'main_category'
+            color='main_category',
             hover_data=['name', 'all_categories', 'ingredients'],
             title='Autoencoder-Reduced Embeddings Visualization',
             labels={'main_category': 'Main Category'}
@@ -317,7 +315,7 @@ class RecipeSearchEngine:
         
         # Convert categories to numerical labels
         le = LabelEncoder()
-        labels = le.fit_transform(main_categories)  # Corrigido de categories para main_categories
+        labels = le.fit_transform(main_categories) 
         
         # Calculate clustering metrics for both embedding spaces
         sbert_silhouette = silhouette_score(self.embeddings, labels)

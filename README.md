@@ -96,13 +96,29 @@ The training applies random noise to input vectors. This process prevents overfi
 
 # Step 2: Embedding Visualization
 
-## SBERT Embedding Space
-TSNE projects the original 768-dimensional SBERT embeddings into 2D space. The visualization reveals category-based groupings. Dessert recipes form a cluster on the right side. Meat-based recipes concentrate in the center, while rice and pasta recipes create smaller groups.
+The system generates interactive plots in the root directory:
+- `embeddings_viz_sbert.html`: SBERT embeddings visualization
+- `embeddings_viz_reduced.html`: Autoencoder-reduced embeddings visualization
 
-![SBERT Embeddings](embeddings_viz_sbert.html)
+To view the interactive plots:
+1. Find the HTML files in your project directory
+2. Open them in a web browser
+3. Hover over points to see recipe details
+   
+## Recipe Categorization
+The system assigns categories through keyword detection in recipe titles, ingredients, and instructions. Multiple categories apply to each recipe when appropriate. Special rules identify vegetarian recipes by absence of meat ingredients. Dessert categorization combines multiple sweet-related signals.
+
+Static previews:
+
+## SBERT Embedding Space
+TSNE projects the original 768-dimensional SBERT embeddings into 2D space. The visualization reveals category-based groupings. Dessert recipes form a cluster on the right side. Bread recipes concentrate in the top center, chicken-based recipes form a group on the left, while rice and pasta recipes are more spread out.
+
+![SBERT Embeddings](sbert_viz.png)
 
 ## Autoencoder-Reduced Space
 The autoencoder reduces embeddings to 128 dimensions before TSNE projection. The reduced space maintains the global structure but shows less distinction between categories. The clusters appear more compressed. The Calinski-Harabasz score increases from 152.324 to 445.476, indicating stronger cluster separation. However, the negative Silhouette scores (-0.013 to -0.140) suggest overlap between categories.
+
+![Autoencoder Embeddings](autoencoder_viz.png)
 
 ## Visualization Analysis
 The metrics reveal a trade-off in the dimensionality reduction process. The autoencoder creates more distinct cluster boundaries at the cost of category overlap. The SBERT embeddings maintain smoother transitions between recipe types. This difference impacts search behavior, where SBERT embeddings might provide more nuanced recipe relationships.
