@@ -93,13 +93,20 @@ class RecipeSearchEngine:
         return False
     
     def prepare_data(self, csv_path):
+        """
+        Prepara os dados carregando o CSV e gerando embeddings.
+        """
         self.df = pd.read_csv(csv_path)
         
         if self.load_data():
             return
         
         logger.info("Gerando embeddings SBERT...")
-        texts = [f"{row['ingredients']} {row['instructions']}" for _, row in self.df.iterrows()]
+        texts = []
+        for _, row in self.df.iterrows():
+            # Melhor formatação do texto para embedding
+            text = f"receita de {row['name']}. ingredientes: {row['ingredients']}. modo de preparo: {row['instructions']}"
+            texts.append(text)
         
         # Gera embeddings e aplica mean pooling
         embeddings = []
@@ -110,6 +117,7 @@ class RecipeSearchEngine:
         
         self.embeddings = np.array(embeddings)
         
+        # Treinar autoencoder apenas para visualização
         logger.info("Treinando denoising autoencoder...")
         self.train_autoencoder(self.embeddings)
         
@@ -229,16 +237,19 @@ class RecipeSearchEngine:
         """
         sbert_viz_path = f"{filename_prefix}_sbert.html"
         reduced_viz_path = f"{filename_prefix}_reduced.html"
-        comparison_viz_path = f"{filename_prefix}_comparison.html"
+        
+        if os.path.exists(sbert_viz_path) and os.path.exists(reduced_viz_path):
+            logger.info("Visualizations already generated")
+            return
         
         logger.info("Generating TSNE visualizations...")
         
         # TSNE for original SBERT embeddings
-        tsne_original = TSNE(n_components=2, random_state=42, perplexity=30, n_iter=1000)
+        tsne_original = TSNE(n_components=2, random_state=42, perplexity=30, max_iter=1000)
         tsne_result_original = tsne_original.fit_transform(self.embeddings)
         
         # TSNE for autoencoder-reduced embeddings
-        tsne_reduced = TSNE(n_components=2, random_state=42, perplexity=30, n_iter=1000)
+        tsne_reduced = TSNE(n_components=2, random_state=42, perplexity=30, max_iter=1000)
         tsne_result_reduced = tsne_reduced.fit_transform(self.reduced_embeddings)
         
         # Get categories for each recipe
@@ -273,12 +284,12 @@ class RecipeSearchEngine:
             'ingredients': self.df['ingredients']
         })
         
-        # Create interactive plots
+        # Create interactive plots with Plotly
         fig_original = px.scatter(
             plot_df_original,
             x='x',
             y='y',
-            color='main_category',
+            color='main_category',  # Corrigido de 'category' para 'main_category'
             hover_data=['name', 'all_categories', 'ingredients'],
             title='SBERT Embeddings Visualization',
             labels={'main_category': 'Main Category'}
@@ -288,65 +299,25 @@ class RecipeSearchEngine:
             plot_df_reduced,
             x='x',
             y='y',
-            color='category',
-            hover_data=['name', 'ingredients'],
+            color='main_category',  # Corrigido de 'category' para 'main_category'
+            hover_data=['name', 'all_categories', 'ingredients'],
             title='Autoencoder-Reduced Embeddings Visualization',
-            labels={'color': 'Recipe Category'}
+            labels={'main_category': 'Main Category'}
         )
-        
-        # Create comparison plot
-        fig_comparison = make_subplots(
-            rows=1, cols=2,
-            subplot_titles=('SBERT Embeddings', 'Autoencoder-Reduced Embeddings')
-        )
-        
-        # Add traces for each category
-        for category in plot_df_original['category'].unique():
-            # Original embeddings
-            mask_orig = plot_df_original['category'] == category
-            fig_comparison.add_trace(
-                go.Scatter(
-                    x=plot_df_original[mask_orig]['x'],
-                    y=plot_df_original[mask_orig]['y'],
-                    name=category,
-                    mode='markers',
-                    showlegend=True
-                ),
-                row=1, col=1
-            )
-            
-            # Reduced embeddings
-            mask_red = plot_df_reduced['category'] == category
-            fig_comparison.add_trace(
-                go.Scatter(
-                    x=plot_df_reduced[mask_red]['x'],
-                    y=plot_df_reduced[mask_red]['y'],
-                    name=category,
-                    mode='markers',
-                    showlegend=False
-                ),
-                row=1, col=2
-            )
-        
-        fig_comparison.update_layout(
-            title_text="Comparison of Embedding Spaces",
-            height=600
-        )
-        
+
         # Save visualizations
         fig_original.write_html(sbert_viz_path)
         fig_reduced.write_html(reduced_viz_path)
-        fig_comparison.write_html(comparison_viz_path)
         
         logger.info("Visualizations generated successfully")
         
         # Calculate and log clustering metrics
         from sklearn.metrics import silhouette_score, calinski_harabasz_score
+        from sklearn.preprocessing import LabelEncoder
         
         # Convert categories to numerical labels
-        from sklearn.preprocessing import LabelEncoder
         le = LabelEncoder()
-        labels = le.fit_transform(categories)
+        labels = le.fit_transform(main_categories)  # Corrigido de categories para main_categories
         
         # Calculate clustering metrics for both embedding spaces
         sbert_silhouette = silhouette_score(self.embeddings, labels)
@@ -365,70 +336,51 @@ class RecipeSearchEngine:
         - Silhouette Score: {reduced_silhouette:.3f}
         - Calinski-Harabasz Score: {reduced_ch:.3f}
         """)
-
-    def normalize_text(self, text: str) -> str:
-        """Normaliza o texto removendo acentos e convertendo para minúsculas"""
-        text = text.lower()
-        text = re.sub(r'[áàãâä]', 'a', text)
-        text = re.sub(r'[éèêë]', 'e', text)
-        text = re.sub(r'[íìîï]', 'i', text)
-        text = re.sub(r'[óòõôö]', 'o', text)
-        text = re.sub(r'[úùûü]', 'u', text)
-        text = re.sub(r'[ç]', 'c', text)
-        return text
     
-    def ingredient_similarity_score(self, query: str, ingredients: str) -> float:
-        """Calcula um score baseado na presença explícita dos ingredientes"""
-        query = self.normalize_text(query)
-        ingredients = self.normalize_text(ingredients)
+    def search(self, query_text: str) -> List[Dict]:
+        """
+        Search for recipes using embedding similarity.
+        Returns only truly relevant results.
+        """
+        query_with_context = f"procuro uma receita de {query_text}"
+        query_embedding = self.sbert.encode([query_with_context])
+        query_embedding = self.mean_pooling(query_embedding)
         
-        if query in ingredients:
-            return 1.0
-            
-        query_words = set(query.split())
-        ingredient_words = set(ingredients.split())
-        common_words = query_words.intersection(ingredient_words)
+        # Calcular similaridade
+        similarities = np.dot(self.embeddings, query_embedding.T).flatten()
+        similarities = similarities / (
+            np.linalg.norm(self.embeddings, axis=1) * np.linalg.norm(query_embedding)
+        )
         
-        if not common_words:
-            return 0.0
-            
-        return len(common_words) / len(query_words)
-    
-    def search(self, query_text: str, top_k: int = 10) -> List[Dict]:
-        query_embedding = self.sbert.encode([query_text])
-        
-        with torch.no_grad():
-            _, reduced_query = self.autoencoder(torch.FloatTensor(query_embedding), add_noise=False)
-        reduced_query = reduced_query.numpy()
-        
-        embedding_similarities = np.dot(self.reduced_embeddings, reduced_query.T).flatten()
-        embedding_similarities = embedding_similarities / (np.linalg.norm(self.reduced_embeddings, axis=1) * np.linalg.norm(reduced_query))
-        
-        ingredient_scores = np.array([
-            self.ingredient_similarity_score(query_text, ingredients)
-            for ingredients in self.df['ingredients']
-        ])
-        
-        combined_scores = (0.7 * embedding_similarities) + (0.3 * ingredient_scores)
-        valid_indices = ingredient_scores > 0
-        
-        if valid_indices.any():
-            filtered_scores = combined_scores[valid_indices]
-            filtered_indices = np.arange(len(combined_scores))[valid_indices]
-            top_k_filtered = min(top_k, len(filtered_scores))
-            top_indices = filtered_indices[filtered_scores.argsort()[-top_k_filtered:][::-1]]
-        else:
-            top_indices = combined_scores.argsort()[-top_k:][::-1]
-        
+        # Encontrar matches exatos
+        query_lower = query_text.lower()
         results = []
-        for idx in top_indices:
-            if combined_scores[idx] > 0.5:
+        
+        # Percorrer todas as receitas em ordem de similaridade
+        for idx in np.argsort(similarities)[::-1]:
+            similarity = similarities[idx]
+            title = self.df.iloc[idx]['name'].lower()
+            ingredients = self.df.iloc[idx]['ingredients'].lower()
+            
+            # Se é um match exato, incluir independente do score
+            is_exact_match = query_lower in title or query_lower in ingredients
+            
+            # Incluir apenas se:
+            # 1. É um match exato, OU
+            # 2. Tem score alto E é similar ao melhor resultado
+            if is_exact_match or (
+                similarity > 0.45 and  # threshold absoluto
+                similarity > similarities.max() * 0.85  # threshold relativo
+            ):
                 results.append({
                     'title': self.df.iloc[idx]['name'],
                     'recipe_url': self.df.iloc[idx]['url'],
                     'ingredients': self.df.iloc[idx]['ingredients'],
-                    'relevance': float(combined_scores[idx]),
-                    'ingredient_match': float(ingredient_scores[idx])
+                    'similarity_score': float(similarity)
                 })
+            else:
+                # Se não é match exato e o score é baixo, podemos parar
+                if len(results) > 0:
+                    break
         
-        return results
+        return results[:10]

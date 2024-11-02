@@ -35,7 +35,7 @@ class DenoisingAutoencoder(nn.Module):
             
         self.decoder = nn.Sequential(*decoder_layers)
         
-    def add_noise(self, x, noise_factor=0.2):
+    def add_noise(self, x, noise_factor=0.1):
         noise = torch.randn_like(x) * noise_factor
         noisy_x = x + noise
         return noisy_x

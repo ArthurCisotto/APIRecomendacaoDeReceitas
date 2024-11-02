@@ -21,10 +21,9 @@ async def startup_event():
     search_engine.visualize_embeddings('embeddings_viz')
 
 @app.get("/search", response_model=SearchResponse)
-async def search(query: str = Query(..., description="Search query text"), 
-                limit: Optional[int] = Query(10, description="Number of results to return")):
+async def search(query: str = Query(..., description="Search query text")):
     try:
-        results = search_engine.search(query, top_k=limit)
+        results = search_engine.search(query)
         return SearchResponse(results=results, message="OK")
     except Exception as e:
         logger.error(f"Search error: {str(e)}")
