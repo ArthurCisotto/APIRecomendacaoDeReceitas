@@ -334,51 +334,71 @@ class RecipeSearchEngine:
         - Silhouette Score: {reduced_silhouette:.3f}
         - Calinski-Harabasz Score: {reduced_ch:.3f}
         """)
-    
-    def search(self, query_text: str) -> List[Dict]:
+    def search(self, query_text: str, top_k: int = 10) -> List[Dict]:
         """
-        Search for recipes using embedding similarity.
-        Returns only truly relevant results.
+        Search for recipes using pure embedding-based semantic search.
+        Uses both original and reduced embeddings for better accuracy.
         """
-        query_with_context = f"procuro uma receita de {query_text}"
-        query_embedding = self.sbert.encode([query_with_context])
-        query_embedding = self.mean_pooling(query_embedding)
+        # Generate multiple contextual query embeddings
+        query_contexts = [
+            f"receita de {query_text}",
+            f"prato com {query_text}",
+            f"ingrediente principal {query_text}"
+        ]
         
-        # Calcular similaridade
-        similarities = np.dot(self.embeddings, query_embedding.T).flatten()
-        similarities = similarities / (
+        # Get embeddings for all contexts
+        query_embeddings = self.sbert.encode(query_contexts)
+        
+        # Get mean embedding from all contexts
+        query_embedding = np.mean(query_embeddings, axis=0)
+        
+        # Get reduced embedding
+        query_tensor = torch.FloatTensor(query_embedding).unsqueeze(0)
+        with torch.no_grad():
+            _, reduced_query = self.autoencoder(query_tensor, add_noise=False)
+        reduced_query = reduced_query.numpy()
+        
+        # Calculate similarities in original space (higher dimensional, more nuanced)
+        orig_similarities = np.dot(self.embeddings, query_embedding.T).flatten()
+        orig_similarities = orig_similarities / (
             np.linalg.norm(self.embeddings, axis=1) * np.linalg.norm(query_embedding)
         )
         
-        # Encontrar matches exatos
-        query_lower = query_text.lower()
+        # Calculate similarities in reduced space (more clustered, better for categories)
+        red_similarities = np.dot(self.reduced_embeddings, reduced_query.T).flatten()
+        red_similarities = red_similarities / (
+            np.linalg.norm(self.reduced_embeddings, axis=1) * np.linalg.norm(reduced_query)
+        )
+        
+        # Weight the original space higher as it contains more detailed information
+        final_similarities = (0.8 * orig_similarities) + (0.2 * red_similarities)
+    
+        # Get top results
+        top_indices = np.argsort(final_similarities)[::-1]
+        
+        # Calculate mean and std of top 100 similarities for dynamic thresholding
+        top_100_mean = np.mean(final_similarities[top_indices[:100]])
+        top_100_std = np.std(final_similarities[top_indices[:100]])
+        
+        # Dynamic threshold: mean + 1 std of top 100
+        similarity_threshold = top_100_mean + top_100_std
+        
         results = []
-        
-        # Percorrer todas as receitas em ordem de similaridade
-        for idx in np.argsort(similarities)[::-1]:
-            similarity = similarities[idx]
-            title = self.df.iloc[idx]['name'].lower()
-            ingredients = self.df.iloc[idx]['ingredients'].lower()
+        for idx in top_indices:
+            similarity = final_similarities[idx]
             
-            # Se é um match exato, incluir independente do score
-            is_exact_match = query_lower in title or query_lower in ingredients
+            # Break if we fall below dynamic threshold
+            if similarity < similarity_threshold:
+                break
+                
+            results.append({
+                'title': self.df.iloc[idx]['name'],
+                'recipe_url': self.df.iloc[idx]['url'],
+                'ingredients': self.df.iloc[idx]['ingredients'],
+                'similarity_score': float(similarity)
+            })
             
-            # Incluir apenas se:
-            # 1. É um match exato, OU
-            # 2. Tem score alto E é similar ao melhor resultado
-            if is_exact_match or (
-                similarity > 0.45 and  # threshold absoluto
-                similarity > similarities.max() * 0.85  # threshold relativo
-            ):
-                results.append({
-                    'title': self.df.iloc[idx]['name'],
-                    'recipe_url': self.df.iloc[idx]['url'],
-                    'ingredients': self.df.iloc[idx]['ingredients'],
-                    'similarity_score': float(similarity)
-                })
-            else:
-                # Se não é match exato e o score é baixo, podemos parar
-                if len(results) > 0:
-                    break
-        
-        return results[:10]
+            if len(results) >= top_k:
+                break
+                
+        return results
