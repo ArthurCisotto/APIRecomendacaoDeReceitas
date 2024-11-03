@@ -20,31 +20,27 @@ from models import DenoisingAutoencoder, RecipeDataset
 logger = logging.getLogger(__name__)
 
 class RecipeSearchEngine:
-    def __init__(self, model_name='distiluse-base-multilingual-cased-v2'):
+    def __init__(self, model_name='distiluse-base-multilingual-cased-v1'):
         self.sbert = SentenceTransformer(model_name)
         self.autoencoder = None
         self.df = None
-        self.embeddings = None
-        self.reduced_embeddings = None
+        self.embeddings = None  # original embeddings do SBERT
+        self.latent_embeddings = None  # embeddings do espaço latente (128d)
         
         # Caminhos para os arquivos salvos
         self.model_dir = "saved_models"
         os.makedirs(self.model_dir, exist_ok=True)
         self.autoencoder_path = os.path.join(self.model_dir, "autoencoder.pt")
         self.embeddings_path = os.path.join(self.model_dir, "embeddings.pkl")
-        self.reduced_embeddings_path = os.path.join(self.model_dir, "reduced_embeddings.pkl")
-    
-    def mean_pooling(self, embeddings):
-        """Aplica mean pooling nos embeddings"""
-        return np.mean(embeddings, axis=0) if len(embeddings.shape) > 1 else embeddings
+        self.latent_embeddings_path = os.path.join(self.model_dir, "latent_embeddings.pkl")
         
     def train_autoencoder(self, embeddings, epochs=100, batch_size=32):
         dataset = RecipeDataset(embeddings)
         dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
         
         self.autoencoder = DenoisingAutoencoder(
-            input_dim=embeddings.shape[1],
-            hidden_dims=[512, 256, 128]
+            input_dim=512,  # dimensão do modelo multilíngue
+            hidden_dims=[384, 256, 128]  # redução mais gradual
         )
         
         optimizer = optim.Adam(self.autoencoder.parameters(), lr=1e-4)
@@ -69,21 +65,21 @@ class RecipeSearchEngine:
     def save_data(self):
         with open(self.embeddings_path, 'wb') as f:
             pickle.dump(self.embeddings, f)
-        with open(self.reduced_embeddings_path, 'wb') as f:
-            pickle.dump(self.reduced_embeddings, f)
+        with open(self.latent_embeddings_path, 'wb') as f:
+            pickle.dump(self.latent_embeddings, f)
     
     def load_data(self):
         if os.path.exists(self.embeddings_path) and \
-           os.path.exists(self.reduced_embeddings_path) and \
+           os.path.exists(self.latent_embeddings_path) and \
            os.path.exists(self.autoencoder_path):
             logger.info("Carregando dados e modelo salvos...")
             
             with open(self.embeddings_path, 'rb') as f:
                 self.embeddings = pickle.load(f)
-            with open(self.reduced_embeddings_path, 'rb') as f:
-                self.reduced_embeddings = pickle.load(f)
+            with open(self.latent_embeddings_path, 'rb') as f:
+                self.latent_embeddings = pickle.load(f)
                 
-            self.autoencoder = DenoisingAutoencoder(input_dim=self.embeddings.shape[1])
+            self.autoencoder = DenoisingAutoencoder(input_dim=512)  # dim correta
             self.autoencoder.load_state_dict(torch.load(self.autoencoder_path))
             self.autoencoder.eval()
             
@@ -102,34 +98,33 @@ class RecipeSearchEngine:
         logger.info("Gerando embeddings SBERT...")
         texts = []
         for _, row in self.df.iterrows():
-            # Melhor formatação do texto para embedding
             text = f"receita de {row['name']}. ingredientes: {row['ingredients']}. modo de preparo: {row['instructions']}"
             texts.append(text)
         
-        # Gera embeddings e aplica mean pooling
+        # Gera embeddings - SBERT já retorna um embedding por sentença
         embeddings = []
         for text in tqdm(texts, desc="Gerando embeddings"):
             emb = self.sbert.encode(text)
-            emb = self.mean_pooling(emb)
             embeddings.append(emb)
         
         self.embeddings = np.array(embeddings)
         
-        # Treinar autoencoder apenas para visualização
+        # Treina autoencoder
         logger.info("Treinando denoising autoencoder...")
         self.train_autoencoder(self.embeddings)
         
+        # Gera embeddings do espaço latente
         self.autoencoder.eval()
         with torch.no_grad():
-            _, self.reduced_embeddings = self.autoencoder(
+            _, self.latent_embeddings = self.autoencoder(
                 torch.FloatTensor(self.embeddings),
                 add_noise=False
             )
-        self.reduced_embeddings = self.reduced_embeddings.numpy()
+        self.latent_embeddings = self.latent_embeddings.numpy()
         
         self.save_data()
         logger.info("Dados preparados e salvos com sucesso")
-    
+
     def categorize_recipe(self, name: str, ingredients: str, instructions: str) -> List[str]:
         """
         Categorizes a recipe based on its name, ingredients and instructions.
@@ -217,7 +212,7 @@ class RecipeSearchEngine:
         
         # Detecta sobremesas
         dessert_categories = {'Chocolate', 'Cake', 'Cookie', 'Pie'}
-        sweet_ingredients = {'açúcar', 'chocolate', 'leite condensado', 'doce de leite', 'mel'}
+        sweet_ingredients = {'chocolate', 'leite condensado', 'doce de leite', 'mel'}
         if (found_categories & dessert_categories) or \
         any(ingredient in ingredients for ingredient in sweet_ingredients):
             found_categories.add('Dessert')
@@ -248,7 +243,7 @@ class RecipeSearchEngine:
         
         # TSNE for autoencoder-reduced embeddings
         tsne_reduced = TSNE(n_components=2, random_state=42, perplexity=30, max_iter=1000)
-        tsne_result_reduced = tsne_reduced.fit_transform(self.reduced_embeddings)
+        tsne_result_reduced = tsne_reduced.fit_transform(self.latent_embeddings)
         
         # Get categories for each recipe
         categories_list = [
@@ -319,10 +314,10 @@ class RecipeSearchEngine:
         
         # Calculate clustering metrics for both embedding spaces
         sbert_silhouette = silhouette_score(self.embeddings, labels)
-        reduced_silhouette = silhouette_score(self.reduced_embeddings, labels)
+        reduced_silhouette = silhouette_score(self.latent_embeddings, labels)
         
         sbert_ch = calinski_harabasz_score(self.embeddings, labels)
-        reduced_ch = calinski_harabasz_score(self.reduced_embeddings, labels)
+        reduced_ch = calinski_harabasz_score(self.latent_embeddings, labels)
         
         logger.info(f"""
         Clustering Metrics:
@@ -334,71 +329,33 @@ class RecipeSearchEngine:
         - Silhouette Score: {reduced_silhouette:.3f}
         - Calinski-Harabasz Score: {reduced_ch:.3f}
         """)
+
     def search(self, query_text: str, top_k: int = 10) -> List[Dict]:
         """
-        Search for recipes using pure embedding-based semantic search.
-        Uses both original and reduced embeddings for better accuracy.
+        Search for recipes using SBERT embeddings directly.
         """
-        # Generate multiple contextual query embeddings
-        query_contexts = [
-            f"receita de {query_text}",
-            f"prato com {query_text}",
-            f"ingrediente principal {query_text}"
-        ]
+        # SBERT já retorna um embedding por sentença
+        query_embedding = self.sbert.encode(f"receita de {query_text}")
         
-        # Get embeddings for all contexts
-        query_embeddings = self.sbert.encode(query_contexts)
-        
-        # Get mean embedding from all contexts
-        query_embedding = np.mean(query_embeddings, axis=0)
-        
-        # Get reduced embedding
-        query_tensor = torch.FloatTensor(query_embedding).unsqueeze(0)
-        with torch.no_grad():
-            _, reduced_query = self.autoencoder(query_tensor, add_noise=False)
-        reduced_query = reduced_query.numpy()
-        
-        # Calculate similarities in original space (higher dimensional, more nuanced)
-        orig_similarities = np.dot(self.embeddings, query_embedding.T).flatten()
-        orig_similarities = orig_similarities / (
+        # Calcular similaridades diretamente com os embeddings do SBERT
+        similarities = np.dot(self.embeddings, query_embedding)
+        similarities = similarities / (
             np.linalg.norm(self.embeddings, axis=1) * np.linalg.norm(query_embedding)
         )
         
-        # Calculate similarities in reduced space (more clustered, better for categories)
-        red_similarities = np.dot(self.reduced_embeddings, reduced_query.T).flatten()
-        red_similarities = red_similarities / (
-            np.linalg.norm(self.reduced_embeddings, axis=1) * np.linalg.norm(reduced_query)
-        )
-        
-        # Weight the original space higher as it contains more detailed information
-        final_similarities = (0.8 * orig_similarities) + (0.2 * red_similarities)
-    
         # Get top results
-        top_indices = np.argsort(final_similarities)[::-1]
-        
-        # Calculate mean and std of top 100 similarities for dynamic thresholding
-        top_100_mean = np.mean(final_similarities[top_indices[:100]])
-        top_100_std = np.std(final_similarities[top_indices[:100]])
-        
-        # Dynamic threshold: mean + 1 std of top 100
-        similarity_threshold = top_100_mean + top_100_std
+        top_indices = np.argsort(similarities)[::-1]
         
         results = []
-        for idx in top_indices:
-            similarity = final_similarities[idx]
-            
-            # Break if we fall below dynamic threshold
-            if similarity < similarity_threshold:
-                break
-                
+        for idx in top_indices[:top_k]:
             results.append({
                 'title': self.df.iloc[idx]['name'],
                 'recipe_url': self.df.iloc[idx]['url'],
                 'ingredients': self.df.iloc[idx]['ingredients'],
-                'similarity_score': float(similarity)
+                'similarity_score': float(similarities[idx])
             })
-            
-            if len(results) >= top_k:
-                break
-                
+        
+        # Filter out low similarity scores dynamically 
+        results = [res for res in results if res['similarity_score'] > 0.5]
+        
         return results

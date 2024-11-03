@@ -3,7 +3,7 @@ import torch.nn as nn
 from torch.utils.data import Dataset
 
 class DenoisingAutoencoder(nn.Module):
-    def __init__(self, input_dim=768, hidden_dims=[512, 256, 128]):
+    def __init__(self, input_dim=512, hidden_dims=[384, 256, 128]):
         super(DenoisingAutoencoder, self).__init__()
         
         # Encoder
