@@ -3,6 +3,7 @@ from pydantic import BaseModel
 from typing import List, Optional, Dict
 import logging
 from search_engine import RecipeSearchEngine
+from embedding_analysis import run_analysis
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -19,6 +20,16 @@ search_engine = RecipeSearchEngine()
 async def startup_event():
     search_engine.prepare_data('recipes.csv')
     search_engine.visualize_embeddings('embeddings_viz')
+    results = run_analysis(search_engine)
+    
+    if results:
+        print("\nResultados finais:")
+        for r in results:
+            print(f"\n{r['name']}:")
+            print(f"F1-Score: {r['f1']:.3f}")
+            print(f"Silhouette Score: {r['silhouette']:.3f}")
+            print(f"Calinski-Harabasz Score: {r['calinski']:.3f}")
+
 
 @app.get("/search", response_model=SearchResponse)
 async def search(query: str = Query(..., description="Search query text")):

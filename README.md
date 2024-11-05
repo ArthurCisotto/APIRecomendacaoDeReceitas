@@ -339,3 +339,11 @@ The switch to a multilingual SBERT model significantly improved search quality. 
 3. Consider alternative compression techniques
 
 The current implementation prioritizes search quality over reduced dimensionality, using the full power of the multilingual model.
+
+# Step 4: Machine Learning Engineer
+
+A multi-label classification task serves as a proxy to evaluate embedding quality across different dimensionality reduction techniques. The system transforms recipe texts into categorized data points using ingredient-based rules. The classification model predicts recipe categories from the embeddings using logistic regression.
+
+SBERT embeddings achieve the highest F1-score of 0.832, while PCA reduction maintains strong performance at 0.793. The autoencoder approach shows significant information loss with an F1-score of 0.608. UMAP performs better than the autoencoder   but worse than PCA, achieving an F1-score of 0.691. The Calinski-Harabasz scores indicate that UMAP creates the most distinct clusters, though this does not translate to better classification performance. These results support our decision to use full SBERT embeddings in the search system.
+
+![Embedding Methods Comparison](embedding_comparison.png)
